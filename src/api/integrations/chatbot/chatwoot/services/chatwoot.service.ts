@@ -1369,13 +1369,15 @@ export class ChatwootService {
           formatText = textToConcat.join(formattedDelimiter);
         }
 
+        let isFirstMedia = true;
         for (const message of body.conversation.messages) {
           if (message.attachments && message.attachments.length > 0) {
             for (const attachment of message.attachments) {
-              if (!messageReceived) {
-                formatText = null;
+              let captionToSend = null;
+              if (isFirstMedia) {
+                captionToSend = formatText;
+                isFirstMedia = false;
               }
-
               const options: Options = {
                 quoted: await this.getQuotedMessage(body, instance),
               };
@@ -1384,7 +1386,7 @@ export class ChatwootService {
                 waInstance,
                 chatId,
                 attachment.data_url,
-                formatText,
+                captionToSend,
                 options,
               );
               if (!messageSent && body.conversation?.id) {
@@ -1405,95 +1407,6 @@ export class ChatwootService {
                 instance,
               );
             }
-          } else {
-            const data: SendTextDto = {
-              number: chatId,
-              text: formatText,
-              delay: 1200,
-              quoted: await this.getQuotedMessage(body, instance),
-            };
-
-            sendTelemetry('/message/sendText');
-
-            let messageSent: any;
-            try {
-              messageSent = await waInstance?.textMessage(data, true);
-              if (!messageSent) {
-                throw new Error('Message not sent');
-              }
-
-              if (Long.isLong(messageSent?.messageTimestamp)) {
-                messageSent.messageTimestamp = messageSent.messageTimestamp?.toNumber();
-              }
-
-              await this.updateChatwootMessageId(
-                {
-                  ...messageSent,
-                  instanceId: instance.instanceId,
-                },
-                {
-                  messageId: body.id,
-                  inboxId: body.inbox?.id,
-                  conversationId: body.conversation?.id,
-                  contactInboxSourceId: body.conversation?.contact_inbox?.source_id,
-                },
-                instance,
-              );
-            } catch (error) {
-              if (!messageSent && body.conversation?.id) {
-                this.onSendMessageError(instance, body.conversation?.id, error);
-              }
-              throw error;
-            }
-          }
-        }
-
-        const chatwootRead = this.configService.get<Chatwoot>('CHATWOOT').MESSAGE_READ;
-        if (chatwootRead) {
-          const lastMessage = await this.prismaRepository.message.findFirst({
-            where: {
-              key: {
-                path: ['fromMe'],
-                equals: false,
-              },
-              instanceId: instance.instanceId,
-            },
-          });
-          if (lastMessage && !lastMessage.chatwootIsRead) {
-            const key = lastMessage.key as {
-              id: string;
-              fromMe: boolean;
-              remoteJid: string;
-              participant?: string;
-            };
-
-            waInstance?.markMessageAsRead({
-              readMessages: [
-                {
-                  id: key.id,
-                  fromMe: key.fromMe,
-                  remoteJid: key.remoteJid,
-                },
-              ],
-            });
-            const updateMessage = {
-              chatwootMessageId: lastMessage.chatwootMessageId,
-              chatwootConversationId: lastMessage.chatwootConversationId,
-              chatwootInboxId: lastMessage.chatwootInboxId,
-              chatwootContactInboxSourceId: lastMessage.chatwootContactInboxSourceId,
-              chatwootIsRead: true,
-            };
-
-            await this.prismaRepository.message.updateMany({
-              where: {
-                instanceId: instance.instanceId,
-                key: {
-                  path: ['id'],
-                  equals: key.id,
-                },
-              },
-              data: updateMessage,
-            });
           }
         }
       }
